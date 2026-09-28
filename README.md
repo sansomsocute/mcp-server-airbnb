@@ -134,11 +134,22 @@ Search for Airbnb listings with comprehensive filtering options.
 - `minPrice` (optional): Minimum price per night
 - `maxPrice` (optional): Maximum price per night
 - `cursor` (optional): Pagination cursor for browsing results
-- `propertyType` (optional): Filter by property type — `entire_home`, `private_room`, `shared_room`, or `hotel_room`
+- `propertyType` (optional): Filter by type of place — `entire_home`, `private_room`, or `hotel_room`. (`shared_room` was removed: Airbnb no longer offers that filter and ignores it.)
+- `buildingTypes` (optional): Filter by kind of building, Airbnb's "Property type" filter — any of `house`, `apartment`, `guesthouse`, `hotel`
+- `minBedrooms`, `minBeds`, `minBathrooms` (optional): Minimum rooms and beds
+- `amenities` (optional): Only return listings with all of these amenities, e.g. `["pool", "hot_tub", "wifi"]`. Supported: `waterfront`, `wifi`, `air_conditioning`, `pool`, `kitchen`, `free_parking`, `smoking_allowed`, `gym`, `breakfast`, `hot_tub`, `indoor_fireplace`, `heating`, `washer`, `dryer`, `smoke_alarm`, `carbon_monoxide_alarm`, `hair_dryer`, `iron`, `dedicated_workspace`, `self_check_in`, `tv`, `ev_charger`, `bbq_grill`, `crib`, `king_bed`, and accessibility features (`step_free_access`, `wide_guest_entrance`, `disabled_parking`, `step_free_bedroom`, `wide_bedroom_entrance`, `step_free_bathroom`, `wide_bathroom_entrance`, `ceiling_or_mobile_hoist`, `shower_grab_bar`, `toilet_grab_bar`, `step_free_shower`, `shower_or_bath_chair`). Unknown names return an error listing the valid ones.
+- `privateBathroom` (optional): Only listings with a private attached bathroom
+- `instantBook` (optional): Only listings that can be booked without waiting for host approval
+- `guestFavorite` (optional): Only Airbnb "Guest favorite" listings
+- `luxe` (optional): Only Airbnb Luxe listings
+- `superhost` (optional): Only listings whose host is a Superhost
+- `minReviewScore` (optional): Minimum average guest rating, 0–5 (e.g. `4.8`). Airbnb applies this loosely: listings a little below the threshold and new listings with no rating yet can still appear, so check each result's `avgRatingA11yLabel` when the cutoff matters
+- `hostLanguages` (optional): Only listings whose host speaks one of these languages, as language codes (e.g. `["en", "ja"]`; `sgn` is sign language)
 - `ignoreRobotsText` (optional): Override robots.txt for this request
 
 **Returns:**
 - Search results with property details, pricing, and direct links
+- When `amenities` is given, each result's `requestedAmenities` lists the requested amenities Airbnb confirms for it. If Airbnb relaxed a filter for a listing to fill out the results, that amenity appears under `relaxedAmenities` instead and is not guaranteed. Airbnb's search results carry no other amenity data; use `airbnb_listing_details` for a listing's full amenity list
 - Pagination information for browsing additional results
 - Search URL for reference
 

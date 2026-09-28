@@ -32,6 +32,80 @@ function getVersion(): string {
 
 const VERSION = getVersion();
 
+// Amenity filter IDs, taken from the filter panel Airbnb embeds in its search page
+// (filters.filterPanel ... discreteFilterItems[].searchParams, key "amenities").
+// Search results carry no per-listing amenity data, so filtering on these IDs is
+// the only way to make a search result say anything reliable about amenities.
+// Waterfront sits in the same panel section but is a knowledge-graph tag, not an
+// amenity ID, so it goes out as kg_and_tags[] and can never be relaxed.
+const AMENITY_IDS: Record<string, { id?: number; tag?: string; title: string }> = {
+  waterfront:               { tag: "Tag:686", title: "Waterfront" },
+  wifi:                     { id: 4,    title: "Wifi" },
+  air_conditioning:         { id: 5,    title: "Air conditioning" },
+  pool:                     { id: 7,    title: "Pool" },
+  kitchen:                  { id: 8,    title: "Kitchen" },
+  free_parking:             { id: 9,    title: "Free parking" },
+  smoking_allowed:          { id: 11,   title: "Smoking allowed" },
+  gym:                      { id: 15,   title: "Gym" },
+  breakfast:                { id: 16,   title: "Breakfast" },
+  hot_tub:                  { id: 25,   title: "Hot tub" },
+  indoor_fireplace:         { id: 27,   title: "Indoor fireplace" },
+  heating:                  { id: 30,   title: "Heating" },
+  washer:                   { id: 33,   title: "Washer" },
+  dryer:                    { id: 34,   title: "Dryer" },
+  smoke_alarm:              { id: 35,   title: "Smoke alarm" },
+  carbon_monoxide_alarm:    { id: 36,   title: "Carbon monoxide alarm" },
+  hair_dryer:               { id: 45,   title: "Hair dryer" },
+  iron:                     { id: 46,   title: "Iron" },
+  dedicated_workspace:      { id: 47,   title: "Dedicated workspace" },
+  self_check_in:            { id: 51,   title: "Self check-in" },
+  tv:                       { id: 58,   title: "TV" },
+  ev_charger:               { id: 97,   title: "EV charger" },
+  bbq_grill:                { id: 99,   title: "BBQ grill" },
+  step_free_access:         { id: 110,  title: "Step-free access" },
+  wide_guest_entrance:      { id: 111,  title: "Guest entrance wider than 32 inches" },
+  disabled_parking:         { id: 114,  title: "Disabled parking spot" },
+  step_free_bedroom:        { id: 115,  title: "Step-free bedroom access" },
+  wide_bedroom_entrance:    { id: 116,  title: "Bedroom entrance wider than 32 inches" },
+  step_free_bathroom:       { id: 120,  title: "Step-free bathroom access" },
+  wide_bathroom_entrance:   { id: 121,  title: "Bathroom entrance wider than 32 inches" },
+  crib:                     { id: 286,  title: "Crib" },
+  ceiling_or_mobile_hoist:  { id: 291,  title: "Ceiling or mobile hoist" },
+  shower_grab_bar:          { id: 294,  title: "Shower grab bar" },
+  toilet_grab_bar:          { id: 295,  title: "Toilet grab bar" },
+  step_free_shower:         { id: 296,  title: "Step-free shower" },
+  shower_or_bath_chair:     { id: 297,  title: "Shower or bath chair" },
+  king_bed:                 { id: 1000, title: "King bed" },
+};
+
+// Airbnb's "Type of place" filter. This used to be sent as l2_property_type_ids,
+// which is actually the building-type filter below (1 = House, 2 = Guesthouse,
+// 3 = Apartment), so private_room returned guesthouses and shared_room apartments.
+// The website no longer offers shared rooms, and Airbnb ignores room_types=Shared room.
+const PLACE_TYPE_PARAMS: Record<string, [string, string]> = {
+  entire_home:  ["room_types[]", "Entire home/apt"],
+  private_room: ["room_types[]", "Private room"],
+  hotel_room:   ["kg_and_tags[]", "Tag:9613"],
+};
+
+// Airbnb's "Property type" filter. Values of l2_property_type_ids combine with OR.
+// The website sends Hotel as kg_and_tags[]=Tag:9613, but tags combine with AND, so
+// "hotel or apartment" would return nothing; l2 type 4 is hotels and ORs cleanly.
+const BUILDING_TYPE_PARAMS: Record<string, [string, string]> = {
+  house:      ["l2_property_type_ids[]", "1"],
+  guesthouse: ["l2_property_type_ids[]", "2"],
+  apartment:  ["l2_property_type_ids[]", "3"],
+  hotel:      ["l2_property_type_ids[]", "4"],
+};
+
+// Language codes from the "Host language" section of Airbnb's filter panel.
+const HOST_LANGUAGES = [
+  "af", "ar", "bg", "ca", "cs", "da", "de", "el", "en", "es", "eu", "fa", "fi", "fil",
+  "fr", "gl", "he", "hi", "hr", "hu", "id", "it", "ja", "km", "ko", "lo", "ms", "nl",
+  "no", "pa", "pl", "pt", "ro", "ru", "sgn", "sk", "sv", "sw", "te", "th", "tl", "tr",
+  "uk", "vi", "zh",
+];
+
 // Tool definitions
 const AIRBNB_SEARCH_TOOL: Tool = {
   name: "airbnb_search",
@@ -85,8 +159,68 @@ const AIRBNB_SEARCH_TOOL: Tool = {
       },
       propertyType: {
         type: "string",
-        enum: ["entire_home", "private_room", "shared_room", "hotel_room"],
-        description: "Filter by property type: 'entire_home' (entire homes/apartments), 'private_room' (private rooms in shared homes), 'shared_room' (shared/dorm-style rooms), 'hotel_room' (hotel rooms)"
+        enum: Object.keys(PLACE_TYPE_PARAMS),
+        description: "Filter by type of place: 'entire_home' (entire homes/apartments), 'private_room' (private rooms in shared homes), 'hotel_room' (hotel rooms)"
+      },
+      buildingTypes: {
+        type: "array",
+        items: {
+          type: "string",
+          enum: Object.keys(BUILDING_TYPE_PARAMS)
+        },
+        description: "Filter by kind of building (Airbnb's 'Property type' filter). Listings matching any of these are returned"
+      },
+      minBedrooms: {
+        type: "number",
+        description: "Minimum number of bedrooms"
+      },
+      minBeds: {
+        type: "number",
+        description: "Minimum number of beds"
+      },
+      minBathrooms: {
+        type: "number",
+        description: "Minimum number of bathrooms"
+      },
+      amenities: {
+        type: "array",
+        items: {
+          type: "string",
+          enum: Object.keys(AMENITY_IDS)
+        },
+        description: "Only return listings that have all of these amenities. Each result's requestedAmenities lists the ones Airbnb confirms for it"
+      },
+      privateBathroom: {
+        type: "boolean",
+        description: "Only return listings with a private attached bathroom"
+      },
+      instantBook: {
+        type: "boolean",
+        description: "Only return listings that can be booked instantly, without waiting for host approval"
+      },
+      guestFavorite: {
+        type: "boolean",
+        description: "Only return 'Guest favorite' listings, Airbnb's most-loved homes by ratings and reviews"
+      },
+      luxe: {
+        type: "boolean",
+        description: "Only return Airbnb Luxe listings (luxury homes with a trip designer)"
+      },
+      superhost: {
+        type: "boolean",
+        description: "Only return listings whose host is a Superhost"
+      },
+      minReviewScore: {
+        type: "number",
+        description: "Minimum average guest rating, from 0 to 5 (e.g. 4.8). Airbnb applies it loosely: slightly lower-rated and unrated new listings can still appear"
+      },
+      hostLanguages: {
+        type: "array",
+        items: {
+          type: "string",
+          enum: HOST_LANGUAGES
+        },
+        description: "Only return listings whose host speaks one of these languages (language codes, e.g. 'en', 'ja'; 'sgn' is sign language)"
       },
       ignoreRobotsText: {
         type: "boolean",
@@ -287,12 +421,6 @@ async function geocodeLocation(location: string): Promise<{
   return coords;
 }
 
-const PROPERTY_TYPE_IDS: Record<string, string> = {
-  entire_home:  "1",
-  private_room: "2",
-  shared_room:  "3",
-  hotel_room:   "4",
-};
 
 // Configuration from environment variables (set by DXT host)
 const IGNORE_ROBOTS_TXT = process.env.IGNORE_ROBOTS_TXT === "true" || process.argv.slice(2).includes("--ignore-robots-txt");
@@ -413,8 +541,56 @@ async function handleAirbnbSearch(params: any) {
     maxPrice,
     cursor,
     propertyType,
+    buildingTypes,
+    minBedrooms,
+    minBeds,
+    minBathrooms,
+    amenities,
+    privateBathroom,
+    instantBook,
+    guestFavorite,
+    luxe,
+    superhost,
+    minReviewScore,
+    hostLanguages,
     ignoreRobotsText = false,
   } = params;
+
+  // Resolve named filter values up front so a typo fails loudly instead of silently
+  // widening the search. Accept "Hot tub" / "hot-tub" as well as "hot_tub".
+  const invalid: Record<string, { unknown: string[]; valid: string[] }> = {};
+  const resolveNames = (field: string, value: any, valid: string[]): string[] => {
+    if (value == null) return [];
+    const keys: string[] = [];
+    const unknown: string[] = [];
+    for (const name of Array.isArray(value) ? value : [value]) {
+      const key = String(name).trim().toLowerCase().replace(/[\s-]+/g, "_");
+      if (!valid.includes(key)) unknown.push(String(name));
+      else if (!keys.includes(key)) keys.push(key);
+    }
+    if (unknown.length) invalid[field] = { unknown, valid };
+    return keys;
+  };
+
+  const placeTypeKeys = resolveNames("propertyType", propertyType, Object.keys(PLACE_TYPE_PARAMS));
+  const buildingTypeKeys = resolveNames("buildingTypes", buildingTypes, Object.keys(BUILDING_TYPE_PARAMS));
+  const requestedAmenityKeys = resolveNames("amenities", amenities, Object.keys(AMENITY_IDS));
+  const hostLanguageKeys = resolveNames("hostLanguages", hostLanguages, HOST_LANGUAGES);
+
+  if (Object.keys(invalid).length) {
+    return {
+      content: [{
+        type: "text",
+        text: JSON.stringify({
+          error: "Unknown filter values: " + Object.entries(invalid)
+            .map(([field, { unknown }]) => `${field} (${unknown.join(", ")})`)
+            .join("; "),
+          validValues: Object.fromEntries(Object.entries(invalid).map(([field, { valid }]) => [field, valid]))
+        }, null, 2)
+      }],
+      isError: true
+    };
+  }
 
   // Build search URL
   // Airbnb path segments use "--" as the separator (e.g. "Paris--France"),
@@ -463,10 +639,49 @@ async function handleAirbnbSearch(params: any) {
   if (minPrice != null) searchUrl.searchParams.append("price_min", minPrice.toString());
   if (maxPrice != null) searchUrl.searchParams.append("price_max", maxPrice.toString());
   
-  // Add property type filter
-  if (propertyType && PROPERTY_TYPE_IDS[propertyType]) {
-    searchUrl.searchParams.append("l2_property_type_ids[]", PROPERTY_TYPE_IDS[propertyType]);
+  // Filters share parameters (propertyType hotel_room and some amenities both go out
+  // as kg_and_tags[]), so skip values already on the URL rather than sending duplicates.
+  const appendOnce = (name: string, value: string) => {
+    if (!searchUrl.searchParams.getAll(name).includes(value)) searchUrl.searchParams.append(name, value);
+  };
+
+  // Add place and building type filters
+  for (const key of placeTypeKeys) appendOnce(...PLACE_TYPE_PARAMS[key]);
+  for (const key of buildingTypeKeys) appendOnce(...BUILDING_TYPE_PARAMS[key]);
+
+  // Add rooms and beds minimums
+  const minimums: [string, any][] = [
+    ["min_bedrooms", minBedrooms],
+    ["min_beds", minBeds],
+    ["min_bathrooms", minBathrooms],
+  ];
+  for (const [name, value] of minimums) {
+    const n = value == null ? 0 : parseInt(value.toString());
+    if (n > 0) searchUrl.searchParams.append(name, n.toString());
   }
+
+  // Add amenity filters
+  for (const key of requestedAmenityKeys) {
+    const { id, tag } = AMENITY_IDS[key];
+    if (tag) appendOnce("kg_and_tags[]", tag);
+    else appendOnce("amenities[]", String(id));
+  }
+  if (privateBathroom) searchUrl.searchParams.append("bathroom_privacy[]", "ENSUITE");
+
+  // Add booking and standout-stay filters
+  if (instantBook) searchUrl.searchParams.append("ib", "true");
+  if (guestFavorite) searchUrl.searchParams.append("guest_favorite", "true");
+  if (luxe) searchUrl.searchParams.append("tier_ids[]", "2");
+
+  // Not in the website's filter panel, but Airbnb's search honors both.
+  if (superhost) searchUrl.searchParams.append("superhost", "true");
+  if (minReviewScore != null) {
+    const score = parseFloat(minReviewScore.toString());
+    if (score > 0) searchUrl.searchParams.append("min_review_score", Math.min(score, 5).toString());
+  }
+
+  // Add host language filter
+  for (const code of hostLanguageKeys) searchUrl.searchParams.append("host_languages[]", code);
 
   // Add cursor for pagination
   if (cursor) {
@@ -537,6 +752,27 @@ async function handleAirbnbSearch(params: any) {
     // }
   };
 
+  // When results run thin Airbnb relaxes amenity filters per listing and reports the
+  // dropped IDs in listingParamOverrides.relaxedAmenityIds. Only the amenities that
+  // were not relaxed are guaranteed, so claim those and name the rest separately
+  // rather than asserting an amenity the listing may not have.
+  const amenityMatch = (raw: any) => {
+    if (!requestedAmenityKeys.length) return {};
+    const relaxedIds = new Set(
+      (raw?.listingParamOverrides?.relaxedAmenityIds ?? []).map((v: any) => Number(v))
+    );
+    const requested: string[] = [];
+    const relaxed: string[] = [];
+    for (const key of requestedAmenityKeys) {
+      const { id, title } = AMENITY_IDS[key];
+      (relaxedIds.has(id) ? relaxed : requested).push(title);
+    }
+    return {
+      requestedAmenities: requested,
+      ...(relaxed.length ? { relaxedAmenities: relaxed } : {}),
+    };
+  };
+
   try {
     log('info', 'Performing Airbnb search', { location, checkin, checkout, adults, children });
     
@@ -564,10 +800,10 @@ async function handleAirbnbSearch(params: any) {
       
       staysSearchResults = {
         searchResults: results.searchResults
-          .map((result: any) => flattenArraysInObject(pickBySchema(result, allowSearchResultSchema)))
-          .map((result: any) => {
+          .map((raw: any) => {
+            const result = flattenArraysInObject(pickBySchema(raw, allowSearchResultSchema));
             const id = atob(result.demandStayListing.id).split(":")[1];
-            return {id, url: `${BASE_URL}/rooms/${id}`, ...result }
+            return { id, url: `${BASE_URL}/rooms/${id}`, ...amenityMatch(raw), ...result };
           }),
         paginationInfo: results.paginationInfo
       }
