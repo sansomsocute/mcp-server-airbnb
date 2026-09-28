@@ -6,7 +6,7 @@
  */
 
 import { spawn } from 'child_process';
-import { fileURLToPath } from 'url';
+import { fileURLToPath, pathToFileURL } from 'url';
 import { dirname, join } from 'path';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -163,6 +163,119 @@ class MCPTester {
     }
   }
 
+  // Amenity names must reach the search URL as Airbnb's numeric IDs, each result must
+  // say which requested amenities it is confirmed to have, and an unknown name must be
+  // rejected rather than silently dropped (which would widen the search).
+  async testAmenityFilter() {
+    console.log('\n🏊 Testing airbnb_search amenity filter...');
+
+    try {
+      const response = await this.sendRequest('tools/call', {
+        name: 'airbnb_search',
+        arguments: { location: 'Portland, OR', amenities: ['pool', 'Hot tub'], ignoreRobotsText: true }
+      });
+      const content = JSON.parse(response.result.content[0].text);
+      if (content.error) throw new Error(content.error);
+
+      const ids = new URLSearchParams(content.searchUrl.split('?')[1]).getAll('amenities[]');
+      if (ids.join(',') !== '7,25') {
+        throw new Error(`expected amenities[]=7,25 in searchUrl, got ${JSON.stringify(ids)}`);
+      }
+      for (const r of content.searchResults) {
+        const claimed = [...(r.requestedAmenities || []), ...(r.relaxedAmenities || [])].sort();
+        if (claimed.join(',') !== 'Hot tub,Pool') {
+          throw new Error(`result ${r.id} does not account for both amenities: ${JSON.stringify(claimed)}`);
+        }
+      }
+      console.log(`✅ Amenity filter applied, ${content.searchResults.length} results annotated`);
+
+      const bad = await this.sendRequest('tools/call', {
+        name: 'airbnb_search',
+        arguments: { location: 'Portland, OR', amenities: ['jacuzzi'], ignoreRobotsText: true }
+      });
+      if (!bad.result.isError) throw new Error('unknown amenity "jacuzzi" was not rejected');
+      console.log('✅ Unknown amenity rejected');
+
+      return true;
+    } catch (error) {
+      console.error('❌ amenity filter test failed:', error.message);
+      return false;
+    }
+  }
+
+  // Each website filter must reach the search URL as the parameter Airbnb's own filter
+  // panel sends. propertyType is the regression case: it used to go out as
+  // l2_property_type_ids, so private_room returned guesthouses.
+  async testSearchFilters() {
+    console.log('\n🎛️  Testing airbnb_search filters...');
+
+    try {
+      const response = await this.sendRequest('tools/call', {
+        name: 'airbnb_search',
+        arguments: {
+          location: 'Portland, OR',
+          propertyType: 'entire_home',
+          buildingTypes: ['house', 'apartment'],
+          minBedrooms: 3,
+          minBathrooms: 2,
+          instantBook: true,
+          guestFavorite: true,
+          superhost: true,
+          minReviewScore: 4.8,
+          hostLanguages: ['es'],
+          amenities: ['waterfront'],
+          ignoreRobotsText: true
+        }
+      });
+      const content = JSON.parse(response.result.content[0].text);
+      if (content.error) throw new Error(content.error);
+
+      const params = new URLSearchParams(content.searchUrl.split('?')[1]);
+      const expected = {
+        'room_types[]': ['Entire home/apt'],
+        'l2_property_type_ids[]': ['1', '3'],
+        'min_bedrooms': ['3'],
+        'min_bathrooms': ['2'],
+        'ib': ['true'],
+        'guest_favorite': ['true'],
+        'superhost': ['true'],
+        'min_review_score': ['4.8'],
+        'host_languages[]': ['es'],
+        'kg_and_tags[]': ['Tag:686'],
+      };
+      for (const [name, values] of Object.entries(expected)) {
+        const got = params.getAll(name);
+        if (got.join(',') !== values.join(',')) {
+          throw new Error(`expected ${name}=${values.join(',')} in searchUrl, got ${JSON.stringify(got)}`);
+        }
+      }
+      console.log('✅ All filters reached the search URL');
+
+      const rooms = await this.sendRequest('tools/call', {
+        name: 'airbnb_search',
+        arguments: { location: 'Portland, OR', minBedrooms: 4, ignoreRobotsText: true }
+      });
+      const roomResults = JSON.parse(rooms.result.content[0].text).searchResults || [];
+      for (const r of roomResults) {
+        const m = /(\d+) bedrooms?/.exec(r.structuredContent?.primaryLine || '');
+        if (m && Number(m[1]) < 4) throw new Error(`result ${r.id} has ${m[0]} despite minBedrooms: 4`);
+      }
+      console.log(`✅ minBedrooms honored across ${roomResults.length} results`);
+
+      const bad = await this.sendRequest('tools/call', {
+        name: 'airbnb_search',
+        arguments: { location: 'Portland, OR', propertyType: 'shared_room', ignoreRobotsText: true }
+      });
+      if (!bad.result.isError) throw new Error('propertyType "shared_room" was not rejected');
+      console.log('✅ Unsupported propertyType rejected');
+
+      return true;
+    } catch (error) {
+      console.error('❌ search filters test failed:', error.message);
+      return false;
+    }
+  }
+
   async testListingDetailsTool() {
     console.log('\n🏠 Testing airbnb_listing_details tool...');
     
@@ -291,6 +404,8 @@ class MCPTester {
       const tests = [
         () => this.testListTools(),
         () => this.testSearchTool(),
+        () => this.testAmenityFilter(),
+        () => this.testSearchFilters(),
         () => this.testListingDetailsTool(),
         () => this.testGeocoding(),
       ];
@@ -318,7 +433,9 @@ class MCPTester {
 }
 
 // Run tests if this script is executed directly
-if (import.meta.url === `file://${process.argv[1]}`) {
+// Compare as URLs: a raw path with a space ("Samsung SSD 2TB") never equals the
+// %20-encoded import.meta.url, and the suite silently skipped every test.
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   const tester = new MCPTester();
   tester.runTests().catch(error => {
     console.error('💥 Test runner crashed:', error);
