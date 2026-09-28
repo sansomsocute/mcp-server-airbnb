@@ -6,7 +6,7 @@
  */
 
 import { spawn } from 'child_process';
-import { fileURLToPath } from 'url';
+import { fileURLToPath, pathToFileURL } from 'url';
 import { dirname, join } from 'path';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -433,7 +433,9 @@ class MCPTester {
 }
 
 // Run tests if this script is executed directly
-if (import.meta.url === `file://${process.argv[1]}`) {
+// Compare as URLs: a raw path with a space ("Samsung SSD 2TB") never equals the
+// %20-encoded import.meta.url, and the suite silently skipped every test.
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   const tester = new MCPTester();
   tester.runTests().catch(error => {
     console.error('💥 Test runner crashed:', error);
